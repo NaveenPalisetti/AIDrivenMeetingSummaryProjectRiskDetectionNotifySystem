@@ -14,10 +14,15 @@ class MCPClient:
     - MCP_API_KEY (optional)
     """
 
-    def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None, timeout: int = 30):
+    def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None):
         self.base_url = base_url or os.environ.get("MCP_SERVER_URL", "http://localhost:8000").rstrip("/")
         self.api_key = api_key or os.environ.get("MCP_API_KEY")
-        self.timeout = timeout
+        # Timeout is now controlled by the MCP_TIMEOUT environment variable (seconds).
+        # If not set, default to 30 seconds for compatibility.
+        try:
+            self.timeout = int(os.environ.get("MCP_TIMEOUT", "10000"))
+        except Exception:
+            self.timeout = 30
 
     def _headers(self) -> Dict[str, str]:
         h = {"Content-Type": "application/json"}
@@ -47,7 +52,7 @@ class MCPClient:
             return False
 
     def orchestrate(self, prompt: str, params: Dict[str, Any], session_id: Optional[str] = None) -> Dict[str, Any]:
-        url = f"{self.base_url}/orchestrate"
+        url = f"{self.base_url}/mcp/orchestrate"
         payload = {"prompt": prompt, "params": params}
         if session_id:
             payload["session_id"] = session_id

@@ -409,19 +409,48 @@ def render_calendar_result(calendar_block, orchestrator, add_message, run_orches
                         st.markdown(f"[Open in Google Calendar]({ev.get('htmlLink')})")                        
 
                     preprocess_text = ev.get("description") or ev.get("summary") or ""
-                    if preprocess_text:
+                    logger.debug("Event '%s' preprocess_text length: %d", title, len(preprocess_text))
+                    if preprocess_text:                        
                         btn_key = f"preprocess_{ev_key}"
-                        if st.button("Preprocess this meeting", key=btn_key):
+                        logger.debug("Rendering Preprocess button with key=%s for event '%s'", btn_key, title)
+                        if st.button("Preprocess", key=btn_key):
+                            logger.debug("Event '%s' preprocess_text preview: %s", title, preprocess_text[:200])
+                            logger.info("Preprocess button clicked for event id=%s title=%s", ev_key, title)
                             user_action = f"Preprocess meeting: {title}"
                             add_message("user", user_action)
                             with st.chat_message("user"):
                                 st.markdown(user_action)
 
                             try:
+                                # Immediate UI feedback
+                                st.info(f"Preprocessing '{title}'...")
+                                logger.info("Preprocess button clicked for event id=%s title=%s", ev_key, title)
+
                                 params = {"transcripts": [preprocess_text], "chunk_size": 1500}
+                                try:
+                                    logger.debug("Preprocess params for %s: %s", title, json.dumps(params, default=str)[:2000])
+                                except Exception:
+                                    logger.debug("Preprocess params (truncated) for %s", title)
+
                                 run_func = _get_run_orchestrate(orchestrator, run_orchestrate)
                                 proc_result = run_func(f"preprocess transcripts for {title}", params)
-                                proc_summary = proc_result.get("results", {}).get("transcript") or proc_result.get("results")
+
+                                # Persist raw response for interactive debugging
+                                try:
+                                    st.session_state['last_preprocess_result'] = proc_result
+                                except Exception:
+                                    pass
+
+                                logger.info("Preprocess result for %s received (type=%s)", title, type(proc_result))
+
+                                # Show raw result in an expander for quick inspection
+                                with st.expander(f"Preprocess debug: {title}", expanded=True):
+                                    try:
+                                        st.json(proc_result)
+                                    except Exception:
+                                        st.write(proc_result)
+
+                                proc_summary = proc_result.get("results", {}).get("transcript") or proc_result.get("results") if isinstance(proc_result, dict) else proc_result
                                 if isinstance(proc_summary, dict) and proc_summary.get("status") == "success":
                                     processed = proc_summary.get("processed", []) if isinstance(proc_summary, dict) else None
                                     if isinstance(processed, list):
@@ -446,11 +475,13 @@ def render_calendar_result(calendar_block, orchestrator, add_message, run_orches
                                                 except Exception:
                                                     pass
                             except Exception as e:
+                                logger.exception("Error during preprocess for %s: %s", title, e)
                                 add_message("system", f"Error: {e}")
                                 with st.chat_message("assistant"):
                                     st.markdown(f"Error: {e}")
                     # Summarize button: uses cached processed chunks or runs preprocess then summarization
                     if preprocess_text:
+                        
                         sum_key = f"summarize_{ev_key}"
                         if st.button("Summarize this meeting", key=sum_key):
                             meeting_title = title

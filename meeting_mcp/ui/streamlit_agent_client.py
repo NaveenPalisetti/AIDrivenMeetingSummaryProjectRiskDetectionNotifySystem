@@ -14,7 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Avoid forcing a global DEBUG root level here; let the project's setup_logging
+# Avoid forcing a global DEBUG root levfel here; let the project's setup_logging
 # control file and console handlers. Configure a module logger and call
 # setup_logging at INFO level to reduce noisy third-party debug logs (e.g. watchdog).
 logger = logging.getLogger("meeting_mcp.ui.streamlit_agent_client")
@@ -82,6 +82,8 @@ else:
 logger.info(" mode  %s", MCP_MODE)
 def run_orchestrate(prompt: str, params: dict, session_id: str = None) -> dict:
     """Adapter to run orchestration either via local orchestrator or MCP server client."""
+
+    logger.info(" mcp_client  %s", mcp_client)
     if mcp_client:
         return mcp_client.orchestrate(prompt, params or {}, session_id=session_id)
     # local in-process orchestrator
@@ -89,21 +91,34 @@ def run_orchestrate(prompt: str, params: dict, session_id: str = None) -> dict:
 
 # Create a persistent MCP session for this Streamlit user (UI-managed)
 # On startup (or refresh) end any previously active `streamlit-user` sessions
+
+
+logger.debug("Streamlit app starting up; checking for existing sessions to clean up. %s", st.session_state)
+
+
 if "mcp_session_id" not in st.session_state:
     try:
-        # Safely iterate over a snapshot of sessions
-        for sid, meta in list(getattr(mcp_host, "sessions", {}).items()):
-            try:
-                if meta.get("agent_id") == "streamlit-user" and meta.get("active"):
-                    mcp_host.end_session(sid)
-                    logger.debug("Ended previous streamlit-user session on startup: %s", sid)
-            except Exception:
-                logger.exception("Failed to end previous session: %s", sid)
+        # If running with a local in-process host, try to end any previous
+        # persistent `streamlit-user` sessions. When using server mode there
+        # is no local `mcp_host` object, so skip this step.
+        if mcp_host:
+            for sid, meta in list(getattr(mcp_host, "sessions", {}).items()):
+                try:
+                    if meta.get("agent_id") == "streamlit-user" and meta.get("active"):
+                        mcp_host.end_session(sid)
+                        logger.debug("Ended previous streamlit-user session on startup: %s", sid)
+                except Exception:
+                    logger.exception("Failed to end previous session: %s", sid)
     except Exception as _e:
         logger.debug("Error while checking for existing sessions: %s", _e)
 
     try:
-        st.session_state["mcp_session_id"] = mcp_host.create_session(agent_id="streamlit-user")
+        logger.debug("Creating new MCP session for Streamlit user...")
+        # When running in server mode, use the HTTP client to create the session.
+        if mcp_client:
+            st.session_state["mcp_session_id"] = mcp_client.create_session(agent_id="streamlit-user")
+        else:
+            st.session_state["mcp_session_id"] = mcp_host.create_session(agent_id="streamlit-user")
         logger.debug("Created persistent MCP session for Streamlit: %s", st.session_state.get("mcp_session_id"))
     except Exception as _e:
         st.session_state["mcp_session_id"] = None
@@ -242,7 +257,10 @@ with st.sidebar:
         st.write(f"Session: {sid}")
         if st.button("End MCP Session"):
             try:
-                mcp_host.end_session(sid)
+                if mcp_client:
+                    mcp_client.end_session(sid)
+                else:
+                    mcp_host.end_session(sid)
                 st.session_state.pop("mcp_session_id", None)
                 st.success("MCP session ended")
             except Exception as e:
@@ -250,15 +268,114 @@ with st.sidebar:
     else:
         if st.button("Start MCP Session"):
             try:
-                st.session_state["mcp_session_id"] = mcp_host.create_session(agent_id="streamlit-user")
+                if mcp_client:
+                    st.session_state["mcp_session_id"] = mcp_client.create_session(agent_id="streamlit-user")
+                else:
+                    st.session_state["mcp_session_id"] = mcp_host.create_session(agent_id="streamlit-user")
                 st.success("MCP session started")
             except Exception as e:
                 st.error(f"Failed to start MCP session: {e}")
 
 col1 = st.container()
 
+# Keep create-event expander state so it stays visible at top
+if 'create_event_expanded' not in st.session_state:
+    st.session_state['create_event_expanded'] = True
+
+# Small form to create a Google Calendar event (placed above chat)
+with st.expander("Create Google Calendar Event", expanded=st.session_state.get('create_event_expanded', True)):
+    with st.form(key="create_event_form"):
+        ev_title = st.text_input("Title")
+        ev_description = st.text_area("Description", height=120)
+        ev_location = st.text_input("Location")
+        cols = st.columns(4)
+        with cols[0]:
+            start_date = st.date_input("Start date")
+        with cols[1]:
+            start_time = st.time_input("Start time")
+        with cols[2]:
+            end_date = st.date_input("End date")
+        with cols[3]:
+            end_time = st.time_input("End time")
+
+        submit_create = st.form_submit_button("Create event")
+
+    if submit_create:
+        try:
+            import datetime
+
+            # Build aware ISO datetimes in local timezone
+            local_tz = datetime.datetime.now().astimezone().tzinfo
+            start_dt = datetime.datetime.combine(start_date, start_time).replace(tzinfo=local_tz)
+            end_dt = datetime.datetime.combine(end_date, end_time).replace(tzinfo=local_tz)
+            # RFC3339 strings
+            # Validate and fix end time when necessary
+            if end_dt <= start_dt:
+                # Default to 1 hour duration when end is missing or not after start
+                end_dt = start_dt + datetime.timedelta(hours=1)
+
+            start_iso = start_dt.isoformat()
+            end_iso = end_dt.isoformat()
+
+            event_data = {
+                "summary": ev_title,
+                "description": ev_description,
+                "location": ev_location,
+                "start": {"dateTime": start_iso},
+                "end": {"dateTime": end_iso},
+            }
+
+            params = {"action": "create", "event_data": event_data}
+
+            # Log params for debugging (useful to trace timeRangeEmpty errors)
+            try:
+                logger.debug("Create event params: %s", {k: (str(v)[:500] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>500 else v) for k,v in params.items()})
+            except Exception:
+                pass
+
+            # Use orchestrator so intent detection and routing happen server-side.
+            sess = st.session_state.get("mcp_session_id")
+            res = run_orchestrate("create calendar event", params, session_id=sess)
+
+            # Add a system-level message and keep the form expanded at top
+            try:
+                if isinstance(res, dict) and res.get('results'):
+                    # If tool returned created event info, include identifier
+                    cal_res = res.get('results', {}).get('calendar') or res.get('results')
+                    status = cal_res.get('status') if isinstance(cal_res, dict) else None
+                    eid = None
+                    if isinstance(cal_res, dict):
+                        evt = cal_res.get('event') or cal_res.get('events')
+                        if isinstance(evt, dict):
+                            eid = evt.get('id')
+                    msg = f"Calendar create result: {status or res.get('status')}."
+                    if eid:
+                        msg += f" Event id: {eid}"
+                else:
+                    msg = f"Calendar create result: {res}"
+            except Exception:
+                msg = f"Calendar create result: {res}"
+
+            add_message("system", msg)
+            st.session_state['create_event_expanded'] = True
+
+            # Display result JSON in assistant bubble
+            add_message("assistant", f"Calendar create result: {res.get('status')}")
+            with st.chat_message("assistant"):
+                st.markdown("Result:")
+                st.json(res)
+
+        except Exception as e:
+            add_message("system", f"Error creating calendar event: {e}")
+            with st.chat_message("assistant"):
+                st.markdown(f"Error creating calendar event: {e}")
+
+    # Keep the expander state in session so it remains visible after interactions
+    st.session_state['create_event_expanded'] = st.session_state.get('create_event_expanded', True)
+
     # Chat-only message area using Streamlit's chat components
 render_chat_messages(st.session_state.messages)
+
 
 # Chat input: submit with Enter — runs the orchestrator by default
 if prompt := st.chat_input("Describe your request (press Enter to send)"):
@@ -813,6 +930,7 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
 
         if not handled:
             logger.debug("Orchestrator free-form call: prompt=%s", (prompt or '')[:500])
+            logger.debug("Orchestrator free-form params: %s", {"session_id": st.session_state.get("mcp_session_id")})
             result = run_orchestrate(prompt, {}, session_id=st.session_state.get("mcp_session_id"))
             logger.debug("Orchestrator free-form result (truncated): %s", str(result)[:2000])
 

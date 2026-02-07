@@ -26,6 +26,9 @@ try:
 except Exception:
     logging.getLogger(__name__).exception("Failed to setup file logging")
 
+# Module logger for this API module
+logger = logging.getLogger(__name__)
+
 # Note: CORS middleware removed per request (if needed, re-add carefully)
 
 
@@ -100,6 +103,32 @@ async def call_calendar(req: CalendarRequest):
     result = await mcp_host.execute_tool(session_id, "calendar", params)
     mcp_host.end_session(session_id)
     return result """
+
+
+@app.post("/mcp/calendar")
+async def call_calendar(req: CalendarRequest):
+    logger.debug("call_calendar received request body: %s", req.dict())
+    session_id = mcp_host.create_session(agent_id="http-client")
+    params = req.dict(exclude_none=True)
+    logger.debug("call_calendar created session=%s params=%s", session_id, params)
+    result = await mcp_host.execute_tool(session_id, "calendar", params)
+    logger.debug("call_calendar tool result: %s", result)
+
+    # Helpful info-level summary when clients request a fetch
+    try:
+        action = params.get("action") or "fetch"
+        if action == "fetch":
+            if isinstance(result, dict):
+                status = result.get("status")
+                events = result.get("events") or []
+                logger.info("call_calendar: fetch completed status=%s events=%d", status, len(events))
+            else:
+                logger.info("call_calendar: fetch completed (non-dict result)")
+    except Exception:
+        logger.exception("call_calendar: failed to log fetch summary")
+
+    mcp_host.end_session(session_id)
+    return result
 
 
 @app.post("/mcp/transcript")
