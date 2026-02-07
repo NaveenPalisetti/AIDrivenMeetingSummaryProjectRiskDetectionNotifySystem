@@ -66,6 +66,10 @@ def extract_last_json(text, chunk_index=None):
 
 def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting_id):
     logger.info("[Mistral] summarize_with_mistral called. Meeting ID: %s", meeting_id)
+    # Default generation / context settings (tuned for mistral-7B-Instruct-v0.2 with 4096 context)
+    model_context_tokens = 4096
+    generation_max_new_tokens = 512
+    safety_margin = 128
     # Accept either a string (single transcript) or a list (pre-chunked)
     if isinstance(transcript, list):
         transcript_chunks = [t for t in transcript if t and isinstance(t, str) and len(t.split()) >= 10]
@@ -85,15 +89,28 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
                 'summary_text': "Transcript too short for summarization.",
                 'action_items': []
             }
-        def chunk_text(text, max_words=1500):
-            words = text.split()
+        def chunk_text_by_tokens(text, tokenizer, model_context_tokens=model_context_tokens, max_new_tokens=generation_max_new_tokens, safety_margin=safety_margin):
+            """Chunk by tokenizer tokens using a safe prompt token budget.
+
+            Defaults tuned for mistral-7B-Instruct with a 4096 token context window.
+            """
+            max_prompt_tokens = model_context_tokens - max_new_tokens - safety_margin
+            if max_prompt_tokens <= 0:
+                raise ValueError("model_context_tokens too small for requested generation length")
+            # Encode to token ids then slice
+            try:
+                ids = tokenizer.encode(text, add_special_tokens=False)
+            except Exception:
+                ids = tokenizer(text, add_special_tokens=False)["input_ids"]
             chunks = []
-            for i in range(0, len(words), max_words):
-                chunk = ' '.join(words[i:i+max_words])
-                chunks.append(chunk)
+            for i in range(0, len(ids), max_prompt_tokens):
+                slice_ids = ids[i:i+max_prompt_tokens]
+                chunks.append(tokenizer.decode(slice_ids, skip_special_tokens=True))
             return chunks
-        transcript_chunks = chunk_text(transcript, max_words=1500)
-        logger.debug("[Mistral] Transcript split into %d chunk(s) (chunk size: 1500 words).", len(transcript_chunks))
+
+        # Use token-aware chunking for reliable context/window handling on a 4096-token model
+        transcript_chunks = chunk_text_by_tokens(transcript, mistral_tokenizer, model_context_tokens=model_context_tokens, max_new_tokens=generation_max_new_tokens, safety_margin=safety_margin)
+        logger.debug("[Mistral] Transcript split into %d chunk(s) (token-aware chunks for %d-context).", len(transcript_chunks), model_context_tokens)
 
     all_summaries = []
     all_action_items = []
@@ -145,9 +162,9 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
             attention_mask = attention_mask.to(device)
         logger.debug("[Mistral][Chunk %d] Input IDs shape: %s", idx+1, input_ids.shape)
         gen_kwargs = dict(
-            max_new_tokens=512,
+            max_new_tokens=generation_max_new_tokens,
             do_sample=False,
-            num_beams=4,
+            num_beams=3,
             early_stopping=True,
             pad_token_id=mistral_tokenizer.eos_token_id
         )
