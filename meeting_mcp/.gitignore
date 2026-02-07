@@ -1,0 +1,4 @@
+# Ignore local credentials
+config/credentials.json
+# Ignore local .env
+.env
