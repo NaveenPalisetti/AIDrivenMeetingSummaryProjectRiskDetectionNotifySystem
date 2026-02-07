@@ -164,7 +164,7 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
         gen_kwargs = dict(
             max_new_tokens=generation_max_new_tokens,
             do_sample=False,
-            num_beams=3,
+            num_beams=2,
             early_stopping=True,
             pad_token_id=mistral_tokenizer.eos_token_id
         )

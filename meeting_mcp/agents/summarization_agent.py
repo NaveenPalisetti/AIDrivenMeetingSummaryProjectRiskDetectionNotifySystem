@@ -78,11 +78,17 @@ def get_mistral_model():
         logger.debug("CUDA GPU detected, proceeding with model loading")
         get_mistral_model.tokenizer = AutoTokenizer.from_pretrained(model_path)
         logger.debug("Mistral tokenizer loaded successfully")
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.bfloat16, 
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True
+        )
         try:
             get_mistral_model.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
-                device_map="cuda",
-                quantization_config=BitsAndBytesConfig(load_in_4bit=True)
+                device_map="auto",
+                quantization_config=bnb_config
             )
             logger.debug("Mistral model loaded with 4-bit quantization")
         except Exception as e:
