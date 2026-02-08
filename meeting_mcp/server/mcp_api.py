@@ -199,15 +199,16 @@ async def call_orchestrate(req: OrchestrateRequest):
     # support both `prompt` and `message` keys
     prompt = req.prompt or req.message or ""
     # If a session_id was provided, delegate to mcp_host to run the intent in that session
+    logger.debug("call_orchestrate received prompt: %s, params: %s, session_id: %s", prompt, {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in (req.params or {}).items()}, req.session_id)
     if req.session_id:
-        # Use in-session execution if supported
+        # Run orchestrator within the provided session (honor caller's session)
         try:
-            result = await mcp_host.execute_intent(req.session_id, prompt, req.params or {})
+            result = await orchestrator.orchestrate(prompt, req.params or {}, session_id=req.session_id)
             return result
         except Exception:
-            # Fallback to orchestrator which will create its own session
-            pass
+            logger.exception("Failed to run orchestrator in provided session; falling back to creating a new session")
 
+    # No session provided (or in-session call failed) — orchestrator will create/manage a short-lived session
     result = await orchestrator.orchestrate(prompt, req.params or {})
     return result
 

@@ -82,7 +82,7 @@ else:
 logger.info(" mode  %s", MCP_MODE)
 def run_orchestrate(prompt: str, params: dict, session_id: str = None) -> dict:
     """Adapter to run orchestration either via local orchestrator or MCP server client."""
-
+    logger.debug("run_orchestrate called with prompt: %s, params: %s, session_id: %s", prompt, {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in params.items()}, session_id)
     logger.info(" mcp_client  %s", mcp_client)
     if mcp_client:
         return mcp_client.orchestrate(prompt, params or {}, session_id=session_id)
@@ -95,7 +95,7 @@ def run_orchestrate(prompt: str, params: dict, session_id: str = None) -> dict:
 
 logger.debug("Streamlit app starting up; checking for existing sessions to clean up. %s", st.session_state)
 
-
+logger.debug("MCP client: %s", mcp_client)
 if "mcp_session_id" not in st.session_state:
     try:
         # If running with a local in-process host, try to end any previous
@@ -112,8 +112,7 @@ if "mcp_session_id" not in st.session_state:
     except Exception as _e:
         logger.debug("Error while checking for existing sessions: %s", _e)
 
-    try:
-        logger.debug("Creating new MCP session for Streamlit user...")
+    try:        
         # When running in server mode, use the HTTP client to create the session.
         if mcp_client:
             st.session_state["mcp_session_id"] = mcp_client.create_session(agent_id="streamlit-user")
@@ -134,7 +133,7 @@ def add_message(role: str, content: str):
     # Central debug logging for every add_message call (truncated content)
     try:
         safe_content = (content[:200] + '...') if isinstance(content, str) and len(content) > 200 else content
-        logger.debug("add_message called: role=%s content=%s", role, safe_content)
+        #logger.debug("add_message called: role=%s content=%s", role, safe_content)
     except Exception:
         pass
 
@@ -149,12 +148,12 @@ def add_message(role: str, content: str):
             last = st.session_state.messages[-1]
             if last.get("role") == role and last.get("content") == content:
                 return
-        logger.debug("Appending message: role=%s content=%s", role, content)
+        #logger.debug("Appending message: role=%s content=%s", role, content)
         st.session_state.messages.append({"role": role, "content": content})
     except Exception:
         # Fallback: ensure at least we append to messages
         try:
-            logger.debug("Fallback append message: role=%s", role  )
+            #logger.debug("Fallback append message: role=%s", role  )
             st.session_state.messages.append({"role": role, "content": content})
         except Exception:
             pass
@@ -379,6 +378,7 @@ render_chat_messages(st.session_state.messages)
 
 # Chat input: submit with Enter — runs the orchestrator by default
 if prompt := st.chat_input("Describe your request (press Enter to send)"):
+
     add_message("user", prompt)
     with st.chat_message("user"):
         st.markdown(prompt)

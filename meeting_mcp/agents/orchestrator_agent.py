@@ -72,8 +72,13 @@ class OrchestratorAgent:
         """
         intent = self.detect_intent(user_message)
         tool_ids = await self.route_agents(intent)
+        logger.debug("OrchestratorAgent detected intent '%s' and routed to tools: %s with params: %s", intent, tool_ids, params)
+        # Prefer session_id provided in params if caller didn't pass it explicitly
+        if session_id is None and params and isinstance(params, dict) and params.get('session_id'):
+            session_id = params.get('session_id')
 
         created_session = False
+        logger.debug("OrchestratorAgent detected session '%s' and routed to tools: %s", session_id, tool_ids)
         if session_id is None:
             session_id = self.mcp_host.create_session(agent_id=self.agent_id)
             created_session = True

@@ -164,8 +164,8 @@ def render_jira_result(jira_result, title=None, add_message=None):
                 st.dataframe(df, use_container_width=True)
             else:
                 st.markdown(f"**Created Jira Task:** {tasks}")
-        else:
-            st.info("No Jira tasks were created or returned by the backend.")
+        #else:
+            #st.info("No Jira tasks were created or returned by the backend.")
         # Always show raw JSON for traceability
         with st.expander("Raw Jira result JSON", expanded=False):
             st.markdown(f"```json\n{json.dumps(jira_result, indent=2)}\n```")
@@ -409,13 +409,13 @@ def render_calendar_result(calendar_block, orchestrator, add_message, run_orches
                         st.markdown(f"[Open in Google Calendar]({ev.get('htmlLink')})")                        
 
                     preprocess_text = ev.get("description") or ev.get("summary") or ""
-                    logger.debug("Event '%s' preprocess_text length: %d", title, len(preprocess_text))
+                    #logger.debug("Event '%s' preprocess_text length: %d", title, len(preprocess_text))
                     if preprocess_text:                        
                         btn_key = f"preprocess_{ev_key}"
-                        logger.debug("Rendering Preprocess button with key=%s for event '%s'", btn_key, title)
+                        #logger.debug("Rendering Preprocess button with key=%s for event '%s'", btn_key, title)
                         if st.button("Preprocess", key=btn_key):
-                            logger.debug("Event '%s' preprocess_text preview: %s", title, preprocess_text[:200])
-                            logger.info("Preprocess button clicked for event id=%s title=%s", ev_key, title)
+                            #logger.debug("Event '%s' preprocess_text preview: %s", title, preprocess_text[:200])
+                            #logger.info("Preprocess button clicked for event id=%s title=%s", ev_key, title)
                             user_action = f"Preprocess meeting: {title}"
                             add_message("user", user_action)
                             with st.chat_message("user"):
@@ -424,14 +424,9 @@ def render_calendar_result(calendar_block, orchestrator, add_message, run_orches
                             try:
                                 # Immediate UI feedback
                                 st.info(f"Preprocessing '{title}'...")
-                                logger.info("Preprocess button clicked for event id=%s title=%s", ev_key, title)
+                                #logger.info("Preprocess button clicked for event id=%s title=%s", ev_key, title)
 
                                 params = {"transcripts": [preprocess_text], "chunk_size": 1500}
-                                try:
-                                    logger.debug("Preprocess params for %s: %s", title, json.dumps(params, default=str)[:2000])
-                                except Exception:
-                                    logger.debug("Preprocess params (truncated) for %s", title)
-
                                 run_func = _get_run_orchestrate(orchestrator, run_orchestrate)
                                 proc_result = run_func(f"preprocess transcripts for {title}", params)
 
@@ -441,7 +436,7 @@ def render_calendar_result(calendar_block, orchestrator, add_message, run_orches
                                 except Exception:
                                     pass
 
-                                logger.info("Preprocess result for %s received (type=%s)", title, type(proc_result))
+                                #logger.info("Preprocess result for %s received (type=%s)", title, type(proc_result))
 
                                 # Show raw result in an expander for quick inspection
                                 with st.expander(f"Preprocess debug: {title}", expanded=True):

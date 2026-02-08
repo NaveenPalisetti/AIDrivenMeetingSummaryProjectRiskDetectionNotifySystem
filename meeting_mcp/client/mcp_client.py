@@ -54,7 +54,11 @@ class MCPClient:
     def orchestrate(self, prompt: str, params: Dict[str, Any], session_id: Optional[str] = None) -> Dict[str, Any]:
         url = f"{self.base_url}/mcp/orchestrate"
         payload = {"prompt": prompt, "params": params}
-        if session_id:
+        # Forward session_id when explicitly provided (even if falsy like empty string)
+        logger.debug("MCPClient orchestrate called with prompt: %s, params: %s, session_id: %s", prompt, {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in params.items()}, session_id)  
+
+        if session_id is not None:
+            logger.debug("MCPClient orchestrate forwarding session_id: %s", session_id)
             payload["session_id"] = session_id
         try:
             r = requests.post(url, json=payload, headers=self._headers(), timeout=self.timeout)
