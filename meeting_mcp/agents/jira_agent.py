@@ -5,8 +5,9 @@ import os
 import json
 import uuid
 from typing import List, Dict, Any
+from datetime import date, datetime
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("meeting_mcp.agents.jira_agent")
 
 try:
     from jira import JIRA
@@ -67,7 +68,9 @@ class JiraAgent:
                         single = {
                             "summary": content.get("task") or content.get("title") or content.get("summary"),
                             "owner": content.get("owner") or content.get("assignee") or content.get("user"),
-                            "due": content.get("deadline") or content.get("due") or content.get("due_date")
+                            "due": content.get("deadline") or content.get("due") or content.get("due_date"),
+                            "issue_type": content.get("issue_type") or content.get("issuetype") or content.get("type"),
+                            "meeting_title": content.get("meeting_title") or content.get("meeting") or ""
                         }
                         action_items = [single]
                     if "user" in content:
@@ -84,9 +87,11 @@ class JiraAgent:
             summary = it.get("summary") or it.get("title") or it.get("task") or it.get("text") or None
             owner = it.get("owner") or it.get("assignee") or it.get("assigned_to") or it.get("user") or None
             due = it.get("due") or it.get("due_date") or it.get("deadline") or it.get("duedate") or None
+            issue_type = it.get("issue_type") or it.get("issuetype") or it.get("type") or None
+            meeting_title = it.get("meeting_title") or it.get("meeting") or ""
             # preserve other fields as-is (non-conflicting)
-            normalized = {**{k: v for k, v in it.items() if k not in ("summary", "title", "task", "text", "owner", "assignee", "assigned_to", "user", "due", "due_date", "deadline", "duedate")}}
-            normalized.update({"summary": summary, "owner": owner, "due": due})
+            normalized = {**{k: v for k, v in it.items() if k not in ("summary", "title", "task", "text", "owner", "assignee", "assigned_to", "user", "due", "due_date", "deadline", "duedate", "issue_type", "issuetype", "type", "meeting_title", "meeting")}}
+            normalized.update({"summary": summary, "owner": owner, "due": due, "issue_type": issue_type, "meeting_title": meeting_title})
             return normalized
 
         try:
@@ -116,7 +121,7 @@ class JiraAgent:
         resp = A2AMessage(message_id=str(uuid.uuid4()), role="agent")
         resp.add_json_part(result)
         return resp
-
+    
     @staticmethod
     def create_jira_issues(action_items: List[Dict[str, Any]], user: str = None, date: str = None) -> Dict[str, Any]:
         """Create Jira issues from a list of action items.
@@ -155,6 +160,7 @@ class JiraAgent:
                     "title": title,
                     "owner": item.get("owner"),
                     "due": item.get("due"),
+                    "issue_type": item.get("issue_type"),
                     "jira_issue_key": None,
                     "status": "skipped",
                     "reason": "jira package or credentials missing"
@@ -170,6 +176,7 @@ class JiraAgent:
                     "title": title,
                     "owner": item.get("owner"),
                     "due": item.get("due"),
+                    "issue_type": item.get("issue_type"),
                     "jira_issue_key": None,
                     "status": "error",
                     "reason": str(e)
@@ -180,18 +187,27 @@ class JiraAgent:
             title = item.get("summary") or item.get("title") or str(item)
             owner = item.get("owner")
             due = item.get("due")
+            issue_type = item.get("issue_type") or item.get("issuetype") or item.get("type") or 'Task'
+            meeting_title = item.get("meeting_title") or item.get("meeting") or ""
+            # Normalize due date into Jira `duedate` (YYYY-MM-DD). If parsing fails, use today's date.         
+
+            norm_due = _normalize_duedate(due)
             issue_fields = {
                 "project": {"key": JIRA_PROJECT},
                 "summary": title.replace("\n", " "),
-                "description": f"Created from meeting. Owner: {owner or 'Unassigned'}\nDue: {due or 'Unspecified'}",
-                "issuetype": {"name": "Task"}
+                "description": f"Created from meeting {meeting_title}. Owner: {owner or 'Unassigned'}\nDue: {norm_due or 'Unspecified'}",
+                "issuetype": {"name": issue_type or "Task"}
             }
+            if norm_due:
+                issue_fields["duedate"] = norm_due
+            logger.debug("Creating Jira issue with fields: %s", issue_fields)
             try:
                 issue = jira_client.create_issue(fields=issue_fields)
                 created.append({
                     "title": title,
                     "owner": owner,
                     "due": due,
+                    "issue_type": issue_type,
                     "jira_issue_key": getattr(issue, 'key', None),
                     "status": "created"
                 })
@@ -200,6 +216,7 @@ class JiraAgent:
                     "title": title,
                     "owner": owner,
                     "due": due,
+                    "issue_type": issue_type,
                     "jira_issue_key": None,
                     "status": "error",
                     "reason": str(e)
@@ -208,4 +225,34 @@ class JiraAgent:
         return {"status": "success", "created_tasks": created}
 
 
+
+
+def _normalize_duedate(val):
+    if not val:
+        return None
+    s = str(val).strip()
+    # try ISO format first
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt.date().isoformat()
+    except Exception:
+        pass
+    # try dateutil if available for flexible parsing
+    try:
+        from dateutil import parser as dateutil_parser
+        dt = dateutil_parser.parse(s, dayfirst=False)
+        return dt.date().isoformat()
+    except Exception:
+        pass
+    # try common formats
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%b %d, %Y", "%d %b %Y", "%B %d, %Y", "%d %B %Y"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.date().isoformat()
+        except Exception:
+            continue
+    # fallback: use today's date
+    return date.today().isoformat()
+
+    
 __all__ = ["JiraAgent"]

@@ -231,7 +231,7 @@ with st.sidebar:
         return default
 
     jira_url = _pick('JIRA_DASHBOARD_URL', 'JIRA_URL', 'jira_url')
-    slack_url = _pick('SLACK_URL', 'slack_url')
+    slack_url = _pick('SLACK_URL', 'slack_url','SLACK_WEBHOOK_URL')
     calendar_url = _pick('CALENDAR_URL', 'calendar_url')
 
     if jira_url:
@@ -375,7 +375,7 @@ with st.expander("Create Google Calendar Event", expanded=st.session_state.get('
     # Chat-only message area using Streamlit's chat components
 render_chat_messages(st.session_state.messages)
 
-
+meeting_title = None
 # Chat input: submit with Enter — runs the orchestrator by default
 if prompt := st.chat_input("Describe your request (press Enter to send)"):
 
@@ -394,7 +394,7 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
         try:
             greeting_re = r"^\s*(hi|hello|hey|good morning|good afternoon|good evening|how are you|how can you help|what can you do)\b"
             if re.search(greeting_re, lower):
-                print("Greeting detected in prompt")
+                #print("Greeting detected in prompt")
                 logger.debug("Greeting detected in prompt")
                 canned = (
                     "AI Orchestrator Help:\n\n"
@@ -484,19 +484,19 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                     if title.lower() in summary.lower() or summary.lower() in title.lower():
                         matched = ev
                         break
-
+            print(f"Matched meeting for summarization: {meeting_title}")
             if matched:
                 meeting_title = matched.get('summary')
                 # Try to find cached processed chunks for this meeting
                 cache = st.session_state.get('processed_cache', {})
                 processed = cache.get(meeting_title)
                 
-
+                #print(f"Matched meeting for summarization: {meeting_title}, cached processed: {'yes' if processed else 'no'}")
                 try:
                     logger.debug("Orchestrator preprocess call: meeting=%s", matched.get('summary'))
                     if not processed:
                         # If not preprocessed, trigger preprocess first
-                        preprocess_text = matched.get("description") or matched.get("summary") or ""
+                        preprocess_text = matched.get("description") or matched.get("summary") or ""                        
                         params = {"transcripts": [preprocess_text], "chunk_size": 1500}
                         logger.debug("Preprocess params: %s", {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in params.items()})
                         proc_result = run_orchestrate(f"preprocess transcripts for {meeting_title}", params, session_id=st.session_state.get("mcp_session_id"))
@@ -549,8 +549,8 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                 handled = True
         # Detect risk command: mirror summarize flow but call orchestrator with risk intent        
         if ("detect risk" in lower or "risk" in lower) and st.session_state.get("last_events"):
-            print("Risk detection command detected in chat")
-            logger.debug("Risk detection command detected in chat")
+            #print("Risk detection command detected in chat")
+            logger.debug("Risk detection command detected in chat ",st.session_state.get("last_events"))
             title = None
             mq = re.search(r'["\u201c\u201d](?P<tq>[^"\u201c\u201d]+)["\u201c\u201d]', prompt)
             if mq:
@@ -626,7 +626,7 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                 except Exception:
                     matched = None
 
-            print("Risk detection matched event: ", matched)
+            #print("Risk detection matched event: ", matched)
             logger.debug("Risk detection matched event: %s", matched)
             if matched:
                 meeting_title = matched.get('summary') or matched.get('id')
@@ -697,15 +697,16 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                     task = matched.get('summary') or matched.get('task') or matched.get('title') or ''
                     owner = matched.get('assignee') or matched.get('owner') or matched.get('assigned_to') or None
                     due = matched.get('due') or matched.get('deadline') or matched.get('due_date') or None
-                    
-                    # Build params for orchestrator and also include `action_items` list
-                    action_item = {"summary": task, "assignee": owner, "due_date": due}
-                    params = {"task": task, "owner": owner, "deadline": due, "action_items": [action_item], "action_items_list": [action_item]}
+                    # Try common keys for issue type coming from action-item extraction
+                    issue_type = matched.get('issue_type') or matched.get('issueType') or matched.get('type') or None
+
+                    action_item = {"summary": task, "assignee": owner, "due_date": due, "issue_type": issue_type, "meeting_title": meeting_title or ""}
+                    params = {"task": task, "owner": owner, "deadline": due, "action_items": [action_item], "action_items_list": [action_item], "issue_type": issue_type, "meeting_title": meeting_title or ""}
                     # Debug: log the matched item and the params in full (truncated for long fields)
                     logger.debug("Matched action item for Jira: %s", matched)
                     logger.debug("Orchestrator jira call: task=%s", (task or '')[:200])
                     logger.debug("Jira params: %s", {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in params.items()})
-                    print("Jira params: %s" % {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in params.items()})
+                    #print("Jira params: %s" % {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in params.items()})
                     logger.debug("Jira params: %s", {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in params.items()})
                     try:
                         jira_result = run_orchestrate(f"create jira for {task}", params, session_id=st.session_state.get("mcp_session_id"))
@@ -731,7 +732,7 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                 logger.exception("Failed to handle create jira command: %s", e)
         # Notify command: allow user to type "notify <meeting>" or "send notification for <meeting>"
         if ("notify" in lower or "send notification" in lower or "notify team" in lower) and st.session_state.get('last_events'):
-            print("Notify command detected in chat",st.session_state.get('last_events'))
+            #print("Notify command detected in chat",st.session_state.get('last_events'))
             logger.debug("Notify command detected in chat: %s", st.session_state.get('last_events'))
             try:
                 import re
@@ -746,6 +747,7 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
 
                 matched = None
                 items = st.session_state.get('last_events', [])
+                logger.debug("Notify command: title=%s, events_count=%d , items=%s", title, len(items),items)
                 if not title:
                     for ev in items:
                         summary = (ev.get('summary') or '')
@@ -767,6 +769,7 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                     if best_score > 0:
                         matched = best
                 # Additional fallbacks when no exact/title match found:
+                logger.debug("Notify command: no direct title match, applying fallbacks: %s", matched)
                 if not matched:
                     try:
                         prompt_words = set(re.findall(r"\w+", prompt.lower()))
@@ -785,6 +788,7 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                             matched = best
                     except Exception:
                         matched = None
+                logger.debug("Notify command: no direct title 2 , applying fallbacks: %s", matched)
 
                 if not matched:
                     try:
@@ -798,7 +802,7 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                     except Exception:
                         matched = None
 
-                print("Notify matched event: ", matched)
+                #print("Notify matched event: ", matched)
                 logger.debug("Notify matched event: %s", matched)
                 if matched:
                     meeting_title = matched.get('summary') or matched.get('id')
@@ -808,7 +812,7 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                     if st.session_state.get('last_risks_details'):
                         params['risks'] = st.session_state.get('last_risks')
 
-                    print("Notify matched event: ", matched)
+                    #print("Notify matched event: ", matched)
                     logger.debug("Notify matched event: %s", matched)
                     try:
                         logger.debug("Orchestrator notify call: %s", params)
@@ -886,7 +890,6 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
 
             if matched:
                 preprocess_text = matched.get("description") or matched.get("summary") or ""
-                
                 
                 try:
                     params = {"transcripts": [preprocess_text], "chunk_size": 1500}

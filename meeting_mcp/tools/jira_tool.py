@@ -3,7 +3,7 @@ import uuid
 import logging
 from typing import Dict, Any, List
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("meeting_mcp.tools.jira_tool")
 
 from meeting_mcp.core.mcp import MCPTool, MCPToolType
 from meeting_mcp.agents.jira_agent import JiraAgent
